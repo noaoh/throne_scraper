@@ -1,3 +1,4 @@
+from api_interpreter import decode_thronebutt_data
 from bs4 import BeautifulSoup
 from urllib.request import urlopen
 from urllib.parse import urljoin
@@ -5,11 +6,11 @@ from json import load
 import asyncio
 import aiohttp
 
-with open("killed_by.json","r") as f:
-    deathflags = load(f)
+with open("stream-api.json","r") as f:
+    api = load(f)
 
-with open("ultra_mutations.json","r") as f:
-    ultra_mutations = load(f)
+def get_id(text):
+    return text[1].split('-')[1]
 
 def parse_entry_data(entry):
     basic_data = entry[0]
@@ -31,42 +32,44 @@ def parse_entry_data(entry):
     # can't really easily include ultra mutation, has numbers and picture
     ultra_mutation_search = detail_data.find_all("span", {"class" : "ultra"})
     if len(ultra_mutation_search) > 0:
-        key_id = ultra_mutation_search[0]['class'][1]
-        ultra_mutation = ultra_mutations[key_id]
+        ultra_mutation_id = get_id(ultra_mutation_search[0]['class'])
 
     else:
-        ultra_mutation = "N/A"
+        ultra_mutation_id = "0"
 
-    mutations = [ultra_mutation]
+    mutation_ids = []
     mutations_search = detail_data.find_all("span", {"class" : "mutation"})
     if len(mutations_search) > 0:
         for mutation in mutations_search:
-            mutations.append(mutation['title'].title())
+            mutation_ids.append(get_id(mutation['class']))
     else:
-        mutations = "N/A"
+        mutation_ids = []
 
-    weapons = []
+    weapon_ids = []
     weapons_search = detail_data.find_all("span", {"class" : "weapon"})
     if len(weapons_search) > 0:
         for weapon in weapons_search:
-            weapons.append(weapon['title'])
+            weapon_ids.append(get_id(weapon['class']))
     else:
-        weapons = "N/A"
+        weapon_ids = []
 
     crown_search = detail_data.find_all("span", {"class" : "crown"})
     if len(crown_search) > 0:
-        crown = crown_search[0]['title']
+        crown_id = get_id(crown_search[0]['class'])
     else:
-        crown = "N/A"
+        crown_id = "1"
+
     # can't really get who killed them that easily, it's a picture w
     # no name, located at https://www.thronebutt.com/img/deathflags/0.gif thru 105.gif
     killed_by_search = detail_data.find_all("img", {"class" : "deathflag"})
     if len(killed_by_search) > 0:
         killed_by_id = killed_by_search[0]['src'].split('/')[-1].split(".")[0]
-        killed_by = deathflags[killed_by_id]
 
-    processed_entry = [rank, name, char_used, loops, level,\
-     score, mutations, weapons, crown, killed_by]
+    entry = {"rank" : rank, "name" : name, "character" : char_used, "loops" : loops,\
+    "level" : level, "score" : score, "ultra" : ultra_mutation_id,\
+    "mutations" : mutation_ids, "weapons" : weapon_ids,\
+      "crown" : crown_id, "lasthit" : killed_by_id}
+    processed_entry = decode_thronebutt_data(entry)
     return processed_entry
 
 def get_page_data(url,entries):
