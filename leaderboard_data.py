@@ -65,16 +65,17 @@ def parse_entry_data(entry):
     if len(killed_by_search) > 0:
         killed_by_id = killed_by_search[0]['src'].split('/')[-1].split(".")[0]
 
-    entry = {"rank" : rank, "name" : name, "character" : char_used, "loops" : loops,\
+    encoded_entry = {"rank" : rank, "name" : name, "character" : char_used, "loops" : loops,\
     "level" : level, "score" : score, "ultra" : ultra_mutation_id,\
     "mutations" : mutation_ids, "weapons" : weapon_ids,\
       "crown" : crown_id, "lasthit" : killed_by_id}
-    processed_entry = decode_thronebutt_data(entry)
-    return processed_entry
+    decoded_entry = decode_thronebutt_data(entry)
+    return decoded_entry
 
-def get_page_data(url,entries):
-    processed_page = []
-    soup = BeautifulSoup(urlopen(url), "html.parser")
+def process_page_data(page_data,entries):
+    processed_page = [] 
+
+    soup = BeautifulSoup(page_data, "html.parser")
     # has data like loop, Stage, Level, Username, character
     basics_data = soup.find_all("tr", {"class" : "scoreboard-entry"})[:entries]
     # has data like mutations, crowns, weapons, and killed by
@@ -87,13 +88,18 @@ def get_page_data(url,entries):
 
     return processed_page
 
+async def get_page_data(url,entries):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            return await response.read()
+
 def chunk(array,n):
     return [array[x:x+n] for x in range(0,len(array),n)]
 
-def leaderboard_crawler(date, entries=0, pages=1):
+async def leaderboard_crawler(date, entries=0, pages=1):
     website = "https://www.thronebutt.com/archive/"
     date_url = urljoin(website,date+"/")
-
+    
     entries_per_page = 30
     number_of_entries = entries or pages * entries_per_page
     entry_list = [*range(1,number_of_entries+1)]
