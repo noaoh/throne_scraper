@@ -1,10 +1,11 @@
 from api_interpreter import decode_thronebutt_data
 from bs4 import BeautifulSoup
-from urllib.request import urlopen
 from urllib.parse import urljoin
 from json import load
 import asyncio
 import aiohttp
+
+LIMIT = 5
 
 with open("stream-api.json","r") as f:
     api = load(f)
@@ -88,34 +89,49 @@ def process_page_data(page_data,entries):
 
     return processed_page
 
-async def get_page_data(url,entries):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
+# used like
+# loop = asyncio.get_event_loop()
+# with aiohttp.ClientSession() as session:
+#   loop.run_until_complete(fetch(url,session))
+async def fetch(url, session):
+    async with session.get(url) as response:
             return await response.read()
 
-def chunk(array,n):
-    return [array[x:x+n] for x in range(0,len(array),n)]
+async def bound_fetch(sem, url, session):
+    async with sem:
+        await fetch(url, session)
 
-async def leaderboard_crawler(date, entries=0, pages=1):
+async def fetch_pages(url,pages,session):
+    tasks = []
+    sem = asyncio.Semaphore(LIMIT)
+
+    for page in range(pages+1):
+        task_url = urljoin(url,str(page))
+        task = asyncio.ensure_future(bound_fetch(sem, task_url, session))
+        tasks.append(task)
+
+    await asyncio.gather(*tasks)
+
+def leaderboard_crawler(date, entries=0, pages=1):
     website = "https://www.thronebutt.com/archive/"
     date_url = urljoin(website,date+"/")
-    
     entries_per_page = 30
     number_of_entries = entries or pages * entries_per_page
-    entry_list = [*range(1,number_of_entries+1)]
+    full_pages, last_page = divmod(number_of_entries,30)
+    entry_list = [30 for x in range(full_pages)]
+    if last_page != 0:
+        entry_list.append(last_page)    
 
-    processed_pages_data = dict(enumerate(chunk(entry_list,30),1))
-    leaderboard_data = {"{0}".format(date) : processed_pages_data}
+    loop = asyncio.get_event_loop()
+    with aiohttp.ClientSession() as session:
+        future = asyncio.ensure_future(fetch_pages(date_url,pages,session))
+        date_html = loop.run_until_complete(future)
 
-    for page, processed_entries in processed_pages_data.items():
-        page_url = urljoin(date_url,str(page))
-        processed_entries[:] = get_page_data(page_url,len(processed_entries))
-
-    return leaderboard_data
+    return date_html
 
 def weekly_leaderboard(week, year, entries=0, pages=1):
     weekly_date = "{0:02d}{1}".format(week, year)
-    return leaderboard_crawler(weekly_date, entries, pages)
+    return leaderboard_crawler(weekly_date,entries,pages)
 
 def daily_leaderboard(day, month, year, entries=0, pages=1):
     daily_date = "{0:02d}{1:02d}{2}".format(day, month, year)
