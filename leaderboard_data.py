@@ -1,14 +1,15 @@
+from urllib.parse import urljoin
 from api_interpreter import decode_thronebutt_data
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-from json import load
-import asyncio
+from pprint import pprint
+import json
 import aiohttp
+import asyncio
 
 LIMIT = 5
 
 with open("stream-api.json","r") as f:
-    api = load(f)
+    api = json.load(f)
 
 def get_id(text):
     return text[1].split('-')[1]
@@ -18,7 +19,7 @@ def parse_entry_data(entry):
     detail_data = entry[1]
 
     rank = basic_data.find("td", {"class" : "scoreboard-rank"}).text
-
+    print(rank)
     name = basic_data.find("span", {"class" : "scoreboard-user"}).text
     name = name.strip().replace('b','')
 
@@ -30,7 +31,6 @@ def parse_entry_data(entry):
 
     score = basic_data.find("td", {"class" : "scoreboard-score"}).text
 
-    # can't really easily include ultra mutation, has numbers and picture
     ultra_mutation_search = detail_data.find_all("span", {"class" : "ultra"})
     if len(ultra_mutation_search) > 0:
         ultra_mutation_id = get_id(ultra_mutation_search[0]['class'])
@@ -60,18 +60,15 @@ def parse_entry_data(entry):
     else:
         crown_id = "1"
 
-    # can't really get who killed them that easily, it's a picture w
-    # no name, located at https://www.thronebutt.com/img/deathflags/0.gif thru 105.gif
     killed_by_search = detail_data.find_all("img", {"class" : "deathflag"})
-    if len(killed_by_search) > 0:
-        killed_by_id = killed_by_search[0]['src'].split('/')[-1].split(".")[0]
+    killed_by_id = killed_by_search[0]['src'].split('/')[-1].split(".")[0]
 
     encoded_entry = {"rank" : rank, "name" : name, "character" : char_used, "loops" : loops,\
-    "level" : level, "score" : score, "ultra" : ultra_mutation_id,\
-    "mutations" : mutation_ids, "weapons" : weapon_ids,\
-      "crown" : crown_id, "lasthit" : killed_by_id}
-    decoded_entry = decode_thronebutt_data(entry)
-    return decoded_entry
+            "level" : level, "score" : score, "ultra" : ultra_mutation_id,\
+            "mutations" : mutation_ids, "weapons" : weapon_ids,\
+            "crown" : crown_id, "lasthit" : killed_by_id}
+
+    return encoded_entry
 
 def process_page_data(page_data,entries):
     processed_page = [] 
@@ -81,7 +78,7 @@ def process_page_data(page_data,entries):
     basics_data = soup.find_all("tr", {"class" : "scoreboard-entry"})[:entries]
     # has data like mutations, crowns, weapons, and killed by
     details_data = soup.find_all("tr", {"class" : "scoreboard-details-row"})\
-    [:entries]
+            [:entries]
     # list of lists with first element being entries_data and second element
     # being details_data
     for entry in zip(basics_data,details_data):
@@ -89,17 +86,14 @@ def process_page_data(page_data,entries):
 
     return processed_page
 
-# used like
-# loop = asyncio.get_event_loop()
-# with aiohttp.ClientSession() as session:
-#   loop.run_until_complete(fetch(url,session))
 async def fetch(url, session):
     async with session.get(url) as response:
-            return await response.read()
+        return await response.read()
 
-async def bound_fetch(sem, url, session):
+async def bound_fetch(url, session, sem):
+    # Getter function with semaphore.
     async with sem:
-        await fetch(url, session)
+        return await fetch(url, session)
 
 async def fetch_pages(url,pages,session):
     tasks = []
@@ -107,10 +101,10 @@ async def fetch_pages(url,pages,session):
 
     for page in range(pages+1):
         task_url = urljoin(url,str(page))
-        task = asyncio.ensure_future(bound_fetch(sem, task_url, session))
+        task = asyncio.ensure_future(bound_fetch(task_url, session, sem))
         tasks.append(task)
 
-    await asyncio.gather(*tasks)
+    return await asyncio.gather(*tasks)
 
 def leaderboard_crawler(date, entries=0, pages=1):
     website = "https://www.thronebutt.com/archive/"
@@ -118,33 +112,31 @@ def leaderboard_crawler(date, entries=0, pages=1):
     entries_per_page = 30
     number_of_entries = entries or pages * entries_per_page
     full_pages, last_page = divmod(number_of_entries,30)
-    entry_list = [30 for x in range(full_pages)]
+    entry_list = [30] * full_pages 
     if last_page != 0:
         entry_list.append(last_page)    
+
 
     loop = asyncio.get_event_loop()
     with aiohttp.ClientSession() as session:
         future = asyncio.ensure_future(fetch_pages(date_url,pages,session))
         date_html = loop.run_until_complete(future)
 
-    return date_html
+    processed_pages = {}
+
+    for page, num_entries in enumerate(entry_list,1):
+        page_data =  date_html[page]
+        processed_pages[str(page)] = process_page_data(page_data,num_entries)
+
+
+    leaderboard_data = {date : processed_pages} 
+    return leaderboard_data
 
 def weekly_leaderboard(week, year, entries=0, pages=1):
     weekly_date = "{0:02d}{1}".format(week, year)
     return leaderboard_crawler(weekly_date,entries,pages)
 
 def daily_leaderboard(day, month, year, entries=0, pages=1):
-    daily_date = "{0:02d}{1:02d}{2}".format(day, month, year)
+    daily_date = "{0:02d}{1:02d}{2}".format(day, month, year) 
     return leaderboard_crawler(daily_date, entries, pages)
 
-def list_string(item):
-    if type(item) is list:
-        return ', '.join(item)
-    else:
-        return item
-
-def pretty_print(entry):
-    description = ["Rank","Player","Character","Loop","Stage","Score",
-    "Mutations","Weapons","Crown","Killed By"]
-    for item, desc in zip(entry,description):
-        print("{0} : {1}".format(desc.ljust(9), list_string(item)))
