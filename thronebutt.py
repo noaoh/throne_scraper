@@ -1,12 +1,10 @@
 from urllib.parse import urljoin
 from api_interpreter import decode_thronebutt_data
+from client_async_sem import *
 from bs4 import BeautifulSoup
-from pprint import pprint
 import json
 import aiohttp
 import asyncio
-
-LIMIT = 5
 
 with open("stream-api.json","r") as f:
     api = json.load(f)
@@ -14,12 +12,17 @@ with open("stream-api.json","r") as f:
 def get_id(text):
     return text[1].split('-')[1]
 
-def parse_entry_data(entry):
+def parse_alltime_data(entry):
+    rank = entry.find("td", {"class" : "scoreboard-rank"}).text
+    name = entry.find("a").text.strip()
+    score = entry.find("td",{"class" : "score"}).text
+    processed_entry 
+
+def parse_board_data(entry):
     basic_data = entry[0]
     detail_data = entry[1]
 
     rank = basic_data.find("td", {"class" : "scoreboard-rank"}).text
-    print(rank)
     name = basic_data.find("span", {"class" : "scoreboard-user"}).text
     name = name.strip().replace('b','')
 
@@ -70,7 +73,7 @@ def parse_entry_data(entry):
 
     return encoded_entry
 
-def process_page_data(page_data,entries):
+def process_date_data(page_data,entries):
     processed_page = [] 
 
     soup = BeautifulSoup(page_data, "html.parser")
@@ -82,37 +85,26 @@ def process_page_data(page_data,entries):
     # list of lists with first element being entries_data and second element
     # being details_data
     for entry in zip(basics_data,details_data):
-        processed_page.append(parse_entry_data(entry))
+        processed_page.append(parse_board_data(entry))
 
     return processed_page
 
-async def fetch(url, session):
-    async with session.get(url) as response:
-        return await response.read()
+def process_all_data(page_data,entries):
+    processed_page = []
+    soup = BeautifulSoup(page_data, "html.parser")
+    entries_data=soup.find_all("tr", {"class" : "scoreboard-entry"})[:entries]
+    for entry in entries_data:
+        processed_page.append(parse_alltime_data(entry))
 
-async def bound_fetch(url, session, sem):
-    # Getter function with semaphore.
-    async with sem:
-        return await fetch(url, session)
-
-async def fetch_pages(url,pages,session):
-    tasks = []
-    sem = asyncio.Semaphore(LIMIT)
-
-    for page in range(pages+1):
-        task_url = urljoin(url,str(page))
-        task = asyncio.ensure_future(bound_fetch(task_url, session, sem))
-        tasks.append(task)
-
-    return await asyncio.gather(*tasks)
+    return processed_page
 
 def leaderboard_crawler(date, entries=0, pages=1):
     website = "https://www.thronebutt.com/archive/"
     date_url = urljoin(website,date+"/")
     entries_per_page = 30
     number_of_entries = entries or pages * entries_per_page
-    full_pages, last_page = divmod(number_of_entries,30)
-    entry_list = [30] * full_pages 
+    full_pages, last_page = divmod(number_of_entries,entries_per_page)
+    entry_list = [entries_per_page] * full_pages 
     if last_page != 0:
         entry_list.append(last_page)    
 
@@ -126,11 +118,33 @@ def leaderboard_crawler(date, entries=0, pages=1):
 
     for page, num_entries in enumerate(entry_list,1):
         page_data =  date_html[page]
-        processed_pages[str(page)] = process_page_data(page_data,num_entries)
+        processed_pages[str(page)] = process_date_data(page_data,num_entries)
 
 
     leaderboard_data = {date : processed_pages} 
     return leaderboard_data
+
+def alltime_leaderboard(entries=0,pages=1):
+    website = "https://www.thronebutt.com/all-time/"
+
+    entries_per_page = 30
+    number_of_entries = entries or pages * entries_per_page
+    full_pages, last_page = divmod(number_of_entries,entries_per_page)
+    entry_list = [entries_per_page] * full_pages
+    if last_page != 0:
+        entry_list.append(last_page)
+
+    loop = asyncio.get_event_loop()
+    with aiohttp.ClientSession() as session:
+        future = asyncio.ensure_future(fetch_pages(website,pages,session))
+        alltime_html = loop.run_until_complete(future)
+
+    processed_pages = {}
+    
+    for page, num_entries in enumerate(entry_list,1):
+        page_data = alltime_html[page]
+        processed_pages[str(page)] =
+        process_alltime_data(page_data,num_entries)
 
 def weekly_leaderboard(week, year, entries=0, pages=1):
     weekly_date = "{0:02d}{1}".format(week, year)
